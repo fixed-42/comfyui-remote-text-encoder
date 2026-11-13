@@ -9,6 +9,6 @@ dependencies = []
 Repository = "https://github.com/fixed-42/comfyui-remote-text-encoder"
 
 [tool.comfy]
-PublisherId = ""
+PublisherId = "fixed-42"
 DisplayName = "Remote Text Encoder"
 Icon = ""
