@@ -515,7 +515,11 @@ def card_info(full=True):
 def expected_capabilities(path):
     arch = gguf_support.arch(path) if is_gguf(path) else None
     mmproj = bool(arch == "qwen2vl" and gguf is not None and gguf.has_mmproj(path))
-    return capabilities.expected(hints.arch(path), arch, mmproj)
+    out = capabilities.expected(hints.arch(path), arch, mmproj)
+    if pe_refusal(path):
+        out[capabilities.VISION] = {"ok": False, "why": "Qwen's prompt-enhancer models don't read images here "
+                                                        "(Remote Locate refuses them)", "checked": False}
+    return out
 
 
 def file_types(file, path):

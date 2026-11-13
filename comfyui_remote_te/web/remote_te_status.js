@@ -22,8 +22,6 @@ const STYLE = `
 .rte-status td.rte-file { white-space: normal; word-break: break-all; }
 .rte-status td.rte-can span { margin-right: 6px; cursor: help; }
 .rte-status .rte-can-yes { color: #4a8; }
-.rte-status .rte-can-no { color: #e66; }
-.rte-status .rte-can-expected { opacity: 0.6; }
 .rte-status .rte-can-unknown { color: var(--descrip-text, #999); }
 .rte-status select { background: var(--comfy-input-bg, #222); color: inherit; border: 1px solid var(--border-color, #444);
   font: inherit; max-width: 130px; }
@@ -83,6 +81,7 @@ function canDo(m, type) {
 }
 
 const CAN_LABEL = { text: "Generate Text", vision: "read images (Remote Locate)" };
+const CAN_SHORT = { text: "text gen", vision: "vision" };
 
 function unknownWhy(what, can, scan) {
   if (what === "vision" && can.text && !can.text.ok)
@@ -102,14 +101,17 @@ function scanLine(scan) {
 function capabilityCell(m, type, scan) {
   const can = canDo(m, type);
   const cell = el("td", { class: "rte-can" });
+  const nots = [];
   for (const what of ["text", "vision"]) {
     const r = can[what];
-    const mark = !r ? "?" : r.ok ? "\u2713" : "\u2717";
-    const cls = !r ? "rte-can-unknown" : r.ok ? "rte-can-yes" : r.checked ? "rte-can-no" : "rte-can-no rte-can-expected";
-    const title = !r ? `${CAN_LABEL[what]}: ${unknownWhy(what, can, scan)}`
-                : r.ok ? `${CAN_LABEL[what]}: yes (checked)` : `${CAN_LABEL[what]}: no: ${r.why}`;
-    cell.append(el("span", { class: cls, title }, `${what} ${mark}`));
+    if (r?.ok) cell.append(el("span", { class: "rte-can-yes", title: `${CAN_LABEL[what]}: yes (checked)` },
+                              CAN_SHORT[what]));
+    else if (r) nots.push(`no ${CAN_LABEL[what]}: ${r.why}`);
+    else if (what === "vision" && can.text && !can.text.ok) continue;
+    else cell.append(el("span", { class: "rte-can-unknown", title: `${CAN_LABEL[what]}: ${unknownWhy(what, can, scan)}` },
+                        `${CAN_SHORT[what]}?`));
   }
+  if (nots.length) cell.title = nots.join("\n");
   return cell;
 }
 
@@ -166,7 +168,8 @@ function render(node) {
   const table = el("table");
   table.append(el("tr", {}, el("th", {}, local ? "keep" : "kept"), el("th", {}, "file"), el("th", {}, "type"),
                   el("th", {}, "size"),
-                  el("th", { title: "text: Generate Text · vision: Remote Locate; ? = not checked yet" }, "can"),
+                  el("th", { title: "what the file can do besides encoding. text gen: Generate Text · vision: reads images " +
+                                     "(Remote Locate); ? = not checked yet; hover a row for why not" }, "extra"),
                   el("th", {}, "state")));
   for (const m of d.models ?? []) {
     const row = p.rows[m.file] ?? { keep: false, type: "" };
