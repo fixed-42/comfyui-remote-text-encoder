@@ -1,0 +1,1 @@
+Locate {what} in the image and output the bounding box coordinates in JSON format.

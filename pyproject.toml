@@ -1,0 +1,14 @@
+[project]
+name = "comfyui-remote-te"
+description = "Run ComfyUI's text encoder on a second PC (or a second GPU) and send the conditioning over the network, so the GPU that renders never loads the encoder."
+version = "0.1.0"
+license = { file = "LICENSE" }
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/fixed-42/comfyui-remote-text-encoder"
+
+[tool.comfy]
+PublisherId = ""
+DisplayName = "Remote Text Encoder"
+Icon = ""
