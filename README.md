@@ -88,7 +88,9 @@ Kept models and picked types are changed only on PC-B, and saved in `ComfyUI/use
 1. Replace `Load CLIP` (`CLIPLoader`) with **Remote CLIP Loader**.
 2. Set `server_url` to PC-B's ComfyUI, e.g. `http://pc-b:8188` (its name or IP address), or `local` on the serving PC
    itself. A default for new nodes can be set in Settings > Remote Text Encoder.
-3. Pick the `model` (PC-B's encoder files; `(kept)` / `(loaded)` show what's ready) and the `type`.
+3. Pick the `type` (as in `CLIPLoader`; only the types PC-B's files can be loaded as are offered), then the `model`
+   (PC-B's files for that type; `(kept)` / `(loaded)` show what's ready). Or connect your diffusion model loader's
+   `MODEL` to **auto_detect**: at Run it sets the type and an encoder file that suits the model and fits PC-B's card.
 4. Connect its `CLIP` to the model's usual encode node.
 
 A **Remote Encoder Status** node on PC-A shows what PC-B has (read-only):
@@ -117,7 +119,8 @@ The same ComfyUI renders on one card and encodes on the other:
   edit workflow, whichever CLIP loader (local or remote) that workflow uses. Sample:
   `sample_workflows/remote_te_locate_sample.json` with `sample_workflows/img/group_photo.png`.
 - **Generate Text**: ComfyUI's own Generate Text node runs on a Remote CLIP for files with `text gen`, e.g. to enhance
-  a prompt on PC-B.
+  a prompt on PC-B. Language models made for it, such as Qwen-Image 2.1's prompt enhancers (Qwen3.5), are listed under
+  the type `text_gen`.
 
 ## Troubleshooting
 
