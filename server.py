@@ -16,6 +16,7 @@ import locate
 import prompt_files
 from gpus import GpuError, list_gpus, pin, resolve, select
 from model_cache import DoesNotFit, ModelCache
+import model_hints
 from model_hints import Hints
 from server_config import (ConfigError, ModelSpec, check_types, comfy_dir, list_models, load_config,
                            models_dir_path, parse_reserve, reserve_mb)
@@ -139,7 +140,7 @@ def load_model(spec, probe=True, check_fit=True):
                            f"{free_mb} MB free on {gpu_name}")
     before = torch.cuda.memory_allocated()
     t0 = time.perf_counter()
-    clip_type = comfy.sd.CLIPType[spec.type.upper()]
+    clip_type = comfy.sd.CLIPType[model_hints.comfy_type(spec.type).upper()]
     if is_gguf(spec.path):
         if gguf_support.arch(spec.path) == "qwen3vl":
             print(f"WARNING: '{spec.name}' {gguf_support.QWEN3VL_WARNING}", flush=True)
@@ -506,6 +507,8 @@ def card_info(full=True):
     info = {"uuid": gpu_uuid, "name": gpu_name, "render": shares_card(), "up": True}
     if shares_card() and cache is not None:
         info["idle_unload_s"] = SHARED_IDLE_UNLOAD_S
+    if cache is not None:
+        info.update({"usable_mb": usable_mb, "reserve_mb": cache.reserve_mb})
     if full:
         info.update({"total_mb": total_mb, "usable_mb": usable_mb, "reserve_mb": cache.reserve_mb, "vram": vram(),
                      "busy": busy_info()})
@@ -584,11 +587,30 @@ def keep_models(entries):
         cache.kept = set(kept)
 
 
+def migrate_types(entries, names):
+    def now(file, typ):
+        return model_hints.legacy_type(hints.arch(names[file]), typ) if file in names else typ
+
+    moved = [(f, t) for f, t in entries if now(f, t) != t]
+    entries = [(f, now(f, t)) for f, t in entries]
+    if moved and keep_path:
+        keep_file.save(keep_path, entries)
+    picks = {f: now(f, t) for f, t in picked.items()}
+    if picks != picked:
+        picked.update(picks)
+        if types_path:
+            type_file.save(types_path, picked)
+    for f, t in moved:
+        print(f"kept model '{f}' as {t} is now kept as {now(f, t)}", flush=True)
+    return entries
+
+
 def load_kept_at_startup():
     entries, problem = keep_file.read(keep_path)
     if problem:
         keep_errors.append(problem)
     names = model_paths()
+    entries = migrate_types(entries, names)
     for file, typ in entries:
         if file not in names:
             keep_errors.append(f"kept model '{file}' is not in the folders any more")
@@ -1230,7 +1252,7 @@ def main():
         except ImportError as e:
             raise ConfigError(f"cannot import ComfyUI from {comfy_path}: {e}. Run server.py with ComfyUI's "
                               f"Python environment (the python that runs ComfyUI)") from None
-        valid_types = {t.name.lower() for t in comfy.sd.CLIPType}
+        valid_types = {t.name.lower() for t in comfy.sd.CLIPType} | model_hints.PACK_TYPES
         check_types(specs, valid_types)
         secret = load_secret(args.secret_file)
         if args.check:

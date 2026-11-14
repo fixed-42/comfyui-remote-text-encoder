@@ -6,7 +6,7 @@ import safetensors.torch
 import torch
 
 from . import log
-from . import endpoint, version
+from . import detect_type, endpoint, version
 from .endpoint import find_api
 
 
@@ -28,7 +28,7 @@ LEGACY_DEFAULT = "(server default)"
 
 
 class RemoteCLIP:
-    def __init__(self, server_url, model, clip_type=None, timeout=300):
+    def __init__(self, server_url, model, clip_type=None, timeout=300, auto=None):
         self.url = server_url.strip().rstrip("/")
         self.timeout = timeout
         self.local = endpoint.is_local(self.url)
@@ -62,6 +62,17 @@ class RemoteCLIP:
                 log.warning(warning)
         on_demand = listing.get("mode") == "on_demand"
         kind = f"on-demand server, {listing.get('gpu', 'GPU')}" if on_demand else "preloaded server"
+        if auto and on_demand and clip_type:
+            name, archs = auto
+            chosen = detect_type.pick_file(listing["models"], model, clip_type, archs, detect_type.room_mb(listing))
+            if chosen is None:
+                need = f"a {' or '.join(archs)} encoder" if archs else f"an encoder of type {clip_type}"
+                raise RuntimeError(f"Remote CLIP Loader: auto_detect: {name} needs {need}; none of the files on "
+                                   f"{self.url} is one: {names}. Put one in PC-B's text_encoders folder, or "
+                                   f"use a local CLIPLoader")
+            if chosen != model:
+                log.info(f"Remote CLIP Loader: auto_detect: {name} -> file '{chosen}' (menu had '{model}')")
+                model = chosen
         if model in (None, "", NO_MODEL, LEGACY_DEFAULT):
             raise RuntimeError(f"Remote CLIP Loader: no model selected; {self.url} ({kind}) has: {names}")
         if model not in names:
@@ -77,6 +88,15 @@ class RemoteCLIP:
         if on_demand and not clip_type:
             raise RuntimeError(f"Remote CLIP Loader: no type selected for '{model}' on {self.url}; suggested: "
                                f"{info.get('types', [])}")
+        if on_demand and clip_type == "qwen_image" and "text_gen" in (info.get("types") or []) and \
+                "qwen_image" not in info["types"]:
+            clip_type = "text_gen"
+        if on_demand and "types" in info and clip_type not in info["types"]:
+            if not info["types"]:
+                raise RuntimeError(f"Remote CLIP Loader: '{model}' on {self.url} is not an encoder this pack knows the "
+                                   f"type of; load it with a local CLIPLoader")
+            raise RuntimeError(f"Remote CLIP Loader: '{model}' can't be loaded as '{clip_type}'; it can be: "
+                               f"{info['types']}. Pick the type first, then a file for it (or connect auto_detect)")
         self.model_name = model
         self.model = info["file"]
         self.clip_type = clip_type if on_demand else info["type"]
