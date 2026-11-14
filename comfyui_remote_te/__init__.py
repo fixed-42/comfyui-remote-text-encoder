@@ -1,3 +1,4 @@
+from . import detect_type, log
 from .image_nodes import RemoteLocate
 from .remote_clip import NO_MODEL, RemoteCLIP
 
@@ -23,24 +24,42 @@ class RemoteCLIPLoader:
                            "Remote Text Encoder). local: this ComfyUI's own encoder server, on its other GPU. A "
                            "standalone server.py or router: its own address."})},
             "optional": {
-                "model": ([NO_MODEL], {"default": NO_MODEL, "tooltip": "Encoder on the server, filled from the "
-                                       "server: config names (preloaded server) or files (on-demand server)."}),
-                "type": (clip_types(), {"tooltip": "On-demand server: how to load the file, as in CLIPLoader; the "
-                                        "menu offers the types the server suggests. Preloaded server: set by the "
-                                        "server."}),
+                "type": (clip_types(), {"tooltip": "How to load the encoder, as in CLIPLoader. The menu offers the "
+                                        "types the server's files can be loaded as; pick it first, then the file. "
+                                        "With auto_detect connected, set from the diffusion model at Run."}),
+                "model": ([NO_MODEL], {"default": NO_MODEL, "tooltip": "Encoder on the server for the chosen type: "
+                                       "files (on-demand server) or config names (preloaded server)."}),
+                "auto_detect": ("MODEL", {"tooltip": "Optional: connect the diffusion model loader's MODEL. At Run "
+                                          "the type is taken from that model, and an encoder file that suits it "
+                                          "when the chosen one doesn't; the menus change to them."}),
             },
         }
 
     @classmethod
-    def VALIDATE_INPUTS(cls, model=NO_MODEL, type=None):
+    def VALIDATE_INPUTS(cls, model=NO_MODEL, type=None, auto_detect=None):
         return True
 
     RETURN_TYPES = ("CLIP",)
     FUNCTION = "load"
     CATEGORY = "loaders/remote"
 
-    def load(self, server_url, model=NO_MODEL, type=None):
-        return (RemoteCLIP(server_url, model, clip_type=type),)
+    def load(self, server_url, model=NO_MODEL, type=None, auto_detect=None):
+        if auto_detect is None:
+            return (RemoteCLIP(server_url, model, clip_type=type),)
+        detected, name = detect_type.clip_type_for(auto_detect, clip_types())
+        if detected is None:
+            log.warning(f"Remote CLIP Loader: auto_detect doesn't know the type for {name}; using '{type}' and "
+                        f"'{model}' as set")
+            return (RemoteCLIP(server_url, model, clip_type=type),)
+        if detected != type:
+            log.info(f"Remote CLIP Loader: auto_detect: {name} -> type '{detected}' (menu had '{type}')")
+        clip = RemoteCLIP(server_url, model, clip_type=detected, auto=(name, detect_type.expected_archs(auto_detect)))
+        ui = {}
+        if clip.clip_type == detected != type:
+            ui["remote_te_type"] = [detected]
+        if clip.model_name != model and clip.clip_type == detected:
+            ui["remote_te_model"] = [clip.model_name]
+        return {"ui": ui, "result": (clip,)} if ui else (clip,)
 
 
 class RemoteEncoderStatus:

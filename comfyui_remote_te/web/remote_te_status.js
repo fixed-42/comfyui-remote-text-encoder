@@ -26,6 +26,10 @@ const STYLE = `
 .rte-status select { background: var(--comfy-input-bg, #222); color: inherit; border: 1px solid var(--border-color, #444);
   font: inherit; max-width: 130px; }
 .rte-status button { font: inherit; padding: 2px 10px; }
+.rte-status tr.rte-kept td, .rte-status tr.rte-loaded td { background: rgba(68, 170, 136, 0.12); }
+.rte-status tr.rte-kept td.rte-state, .rte-status tr.rte-loaded td.rte-state { color: #4a8; font-weight: 600; }
+.rte-status tr.rte-nofit td { opacity: 0.5; }
+.rte-status tr.rte-nofit td.rte-state { color: #d96; opacity: 1; }
 .rte-status .rte-foot { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 `;
 
@@ -74,6 +78,16 @@ function plan(state) {
   for (const m of d.models ?? []) if (rows[m.file]?.keep) mb += m.size_mb;
   return { mb, need: mb + (d.reserve_mb ?? 0), usable: d.usable_mb ?? 0, rows };
 }
+
+function rowState(m, keeps, need, usable, reserve) {
+  const loaded = m.loaded ?? [];
+  if ((m.kept_as ?? []).length) return ["kept", "kept"];
+  if (loaded.length) return ["loaded", `loaded (${loaded.map((l) => l.type).join(", ")})`];
+  if (keeps[m.file]?.keep || need + m.size_mb <= usable) return ["idle", "not loaded"];
+  return ["nofit", reserve + m.size_mb > usable ? "too big for this card" : "won't fit beside kept"];
+}
+
+const ORDER = { kept: 0, loaded: 1, idle: 2, nofit: 3 };
 
 function canDo(m, type) {
   const checked = (type && m.can?.[type]) || {};
@@ -171,7 +185,13 @@ function render(node) {
                   el("th", { title: "what the file can do besides encoding. text gen: Generate Text · vision: reads images " +
                                      "(Remote Locate); ? = not checked yet; hover a row for why not" }, "extra"),
                   el("th", {}, "state")));
-  for (const m of d.models ?? []) {
+  const reserve = d.reserve_mb ?? 0;
+  const server = rowsFromServer(d);
+  let serverNeed = reserve;
+  for (const m of d.models ?? []) if (server[m.file]?.keep) serverNeed += m.size_mb;
+  const ordered = (d.models ?? []).map((m, i) => [ORDER[rowState(m, server, serverNeed, p.usable, reserve)[0]], i, m])
+    .sort((a, b) => a[0] - b[0] || a[1] - b[1]).map(([, , m]) => m);
+  for (const m of ordered) {
     const row = p.rows[m.file] ?? { keep: false, type: "" };
     const edit = () => {
       state.draft ??= rowsFromServer(d);
@@ -194,15 +214,10 @@ function render(node) {
       box = row.keep ? el("span", { title: "kept loaded on that PC" }, "\u2713") : null;
       select = row.type;
     }
-    const loaded = m.loaded ?? [];
-    let status;
-    if ((m.kept_as ?? []).length) status = "kept";
-    else if (loaded.length) status = `loaded (${loaded.map((l) => l.type).join(", ")})`;
-    else if (!row.keep && p.need + m.size_mb > p.usable) status = "won't fit beside kept";
-    else status = "not loaded";
-    table.append(el("tr", {}, el("td", {}, box), el("td", { class: "rte-file" }, m.file), el("td", {}, select),
-                    el("td", {}, gb(m.size_mb)), capabilityCell(m, row.type, d.scan),
-                    el("td", { class: "rte-quiet" }, status)));
+    const [kind, status] = rowState(m, p.rows, p.need, p.usable, reserve);
+    table.append(el("tr", { class: `rte-${kind}` }, el("td", {}, box), el("td", { class: "rte-file" }, m.file),
+                    el("td", {}, select), el("td", {}, gb(m.size_mb)), capabilityCell(m, row.type, d.scan),
+                    el("td", { class: kind === "idle" ? "rte-state rte-quiet" : "rte-state" }, status)));
   }
   root.append(table);
   for (const err of d.keep_errors ?? []) root.append(el("div", { class: "rte-error" }, err));
