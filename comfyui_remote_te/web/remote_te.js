@@ -43,8 +43,9 @@ function setMenus(node, typeChanged) {
   const options = typeOptions(info, type.__allTypes);
   const fresh = isUnset(model.value);
   const chosen = info.entries.find((e) => e.name === model.value);
-  if (type.value === "qwen_image" && chosen?.types.includes("text_gen") && !chosen.types.includes("qwen_image"))
-    type.value = "text_gen"; // a workflow from before text_gen: Qwen3.5 (prompt enhancer) files were qwen_image
+  if (!typeChanged && type.value === "qwen_image" && chosen?.types.includes("text_gen") &&
+      !chosen.types.includes("qwen_image"))
+    type.value = "text_gen";
   if (fresh && options.length) type.value = defaultType(info, options);
   type.options.values = options.includes(type.value) || !type.value ? options : [...options, type.value];
   if (!type.options.values.length) type.options.values = [...type.__allTypes];
