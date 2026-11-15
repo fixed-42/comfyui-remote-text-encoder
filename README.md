@@ -21,7 +21,8 @@ renders without ever loading the encoder.
 PC-B's ComfyUI starts a small encoder server as a separate process on the GPU you choose, and shares its API through
 ComfyUI's own port: nothing else to open or configure. On PC-A, Remote CLIP Loader outputs a stand-in `CLIP`. When an
 encode node calls `tokenize` and `encode`, the text goes to PC-B, which runs ComfyUI's real tokenize + encode on its
-loaded model and sends the conditioning back. The performance penalty is minimum as the traffic sent over LAN is very small.
+loaded model and sends the conditioning back. Over a local network this adds little: usually milliseconds, up to a
+fraction of a second for long prompts on some models.
 
 One PC with two GPUs works the same way: see [One PC with two GPUs](#one-pc-with-two-gpus).
 
@@ -31,7 +32,7 @@ One PC with two GPUs works the same way: see [One PC with two GPUs](#one-pc-with
 - PC-B: an NVIDIA GPU, or a Mac with Apple Silicon (limited: see [macOS](#macos-apple-silicon-as-pc-b)), and ComfyUI
   started with `--listen` so PC-A can reach it.
 - Both PCs on the same local network (there is no authentication: don't expose PC-B to the internet).
-- Tested on Linux, Windows, and on a Mac as PC-B.
+- Tested on Linux, on Windows as PC-A, and on a Mac as PC-B.
 
 ## Install
 
@@ -67,17 +68,19 @@ picks a card ComfyUI doesn't render on. The server starts, stops and moves at on
 REMOTE_TE_SERVE=1 python main.py --listen
 ```
 
-### Remote Encoder Status on PC-B: 
+### Remote Encoder Status on PC-B
 
-Shows list of text encoder available, allow user see the status and VRAM utilization, and pin a models, or pick types
+Lists the text encoders PC-B has, shows what is loaded and how much VRAM is used, and lets you keep (pin) models and
+pick types.
 
 Add a **Remote Encoder Status** node on PC-B with `server_url` = `local`:
 
 - **keep**: tick it and click **Apply** to keep a model loaded (pin it). Other models load when a workflow asks for
-  them and make room for each other. **Useful to prevent Comfyui memory management idle offloading**.
-- **type**: Select a model type; when same text encoder support multiple diffusion model.
-  how the file is loaded, as in `CLIPLoader`. It is detected from the model file with one time scan; for a file it doesn't know
-  ("pick a type"), choose one and click **Apply**. PC-B remembers it, and Remote CLIP Loader offers it first.
+  them and make room for each other. **Kept models never unload**, even on a card shared with ComfyUI, where others
+  unload after 60 s idle.
+- **type**: how the file is loaded, as in `CLIPLoader`; one encoder can serve several diffusion models, as different
+  types. It is detected from the file; for a file it doesn't know ("pick a type"), choose one and click **Apply**.
+  PC-B remembers it, and Remote CLIP Loader offers it first.
 - **extra**: what the file can do besides encoding, checked in the background after startup: `text gen` (ComfyUI's
   Generate Text on a Remote CLIP, e.g. for prompt enhancement) and `vision` (reads images: Remote Locate). The check
   loads each file once; on a slow disk, turn off Settings > Remote Text Encoder > **Check what each encoder can do in
@@ -121,9 +124,9 @@ ComfyUI holds models of its own, so ComfyUI gets the VRAM back. Kept models stay
 
 ## macOS (Apple Silicon) as PC-B
 
-a Mac can serve encoders to another PC. Install this custom node pack.
+A Mac can serve encoders to another PC. Install this pack in ComfyUI Desktop, then:
 
-1. **Desktop version of listen on the network**: add `--listen 0.0.0.0` to Desktop's startup arguments and restart Desktop.
+1. **Listen on the network**: add `--listen 0.0.0.0` to Desktop's startup arguments and restart Desktop.
 2. **Let ComfyUI's Python through the macOS firewall**, or other PCs get an empty reply. Either System Settings >
    Network > Firewall > Options: "Allow incoming connections", or allow the real Python behind Desktop's
    `.venv/bin/python3` (a link):
