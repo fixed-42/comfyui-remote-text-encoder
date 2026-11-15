@@ -1,5 +1,6 @@
 import os
 import subprocess
+import sys
 from dataclasses import dataclass
 
 
@@ -23,7 +24,18 @@ def parse_nvidia_smi(text):
     return gpus
 
 
+MPS_UUID = "GPU-mps"
+
+
+def mac_gpu():
+    name, mem = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string", "hw.memsize"], capture_output=True,
+                               text=True, check=True).stdout.splitlines()[:2]
+    return Gpu(0, name.strip(), MPS_UUID, int(mem) >> 20)
+
+
 def list_gpus():
+    if sys.platform == "darwin":
+        return [mac_gpu()]
     try:
         out = subprocess.run(["nvidia-smi", "--query-gpu=index,name,uuid,memory.total",
                               "--format=csv,noheader,nounits"], capture_output=True, text=True, check=True).stdout

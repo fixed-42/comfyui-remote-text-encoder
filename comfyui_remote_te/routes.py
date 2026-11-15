@@ -172,5 +172,11 @@ def register(prompt_server, get_child=lambda: None, serving=None):
         return web.json_response({"version": VERSION})
 
     prompt_server.routes.get("/remote_te/version")(pack_version)
+
+    async def comfyui_models(request):
+        import comfy.model_management as mm
+        return web.json_response({"models": len(mm.current_loaded_models)})
+
+    prompt_server.routes.get("/remote_te/comfyui_models")(comfyui_models)
     prompt_server.routes.get("/remote_te/serve")(serve_get)
     prompt_server.routes.post("/remote_te/serve")(serve_post)

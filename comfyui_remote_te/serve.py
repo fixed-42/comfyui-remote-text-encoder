@@ -60,7 +60,7 @@ def env_gpu(env):
 
 
 AUTO = "auto"
-DEFAULT_SETTINGS = {"serve": False, "gpu": AUTO}
+DEFAULT_SETTINGS = {"serve": False, "gpu": AUTO, "scan": True}
 
 
 def read_settings(path):
@@ -75,6 +75,8 @@ def read_settings(path):
             out["serve"] = d["serve"]
         if isinstance(d.get("gpu"), str) and d["gpu"].strip():
             out["gpu"] = d["gpu"].strip()
+        if isinstance(d.get("scan"), bool):
+            out["scan"] = d["scan"]
     return out
 
 
@@ -128,6 +130,8 @@ def render_gpu_uuid():
         import torch
         import comfy.model_management as mm
         dev = mm.get_torch_device()
+        if dev.type == "mps":
+            return _gpus().MPS_UUID
         if dev.type != "cuda":
             return None
         return "GPU-" + str(torch.cuda.get_device_properties(dev).uuid)
@@ -173,7 +177,7 @@ def comfyui_url(listen, port, tls=False):
 
 
 def child_argv(python, comfy_dir, models_dirs, gpu_uuid, port, secret_file, keep_file, server=SERVER,
-               custom_nodes=(), capabilities_file=None, render_gpu=None, comfyui=None, types_file=None):
+               custom_nodes=(), capabilities_file=None, render_gpu=None, comfyui=None, types_file=None, scan=True):
     argv = [python, server, "--comfy", comfy_dir]
     for d in models_dirs:
         argv += ["--models-dir", d]
@@ -187,9 +191,11 @@ def child_argv(python, comfy_dir, models_dirs, gpu_uuid, port, secret_file, keep
         argv += ["--types-file", types_file]
     if comfyui:
         argv += ["--comfyui-url", comfyui]
-    return argv + ["--keep-file", keep_file, "--gpu", gpu_uuid, "--host", "127.0.0.1", "--port", str(port),
-                   "--secret-file", secret_file,
-                   "--scan-abilities"]
+    argv += ["--keep-file", keep_file, "--gpu", gpu_uuid, "--host", "127.0.0.1", "--port", str(port),
+             "--secret-file", secret_file]
+    if scan:
+        argv.append("--scan-abilities")
+    return argv
 
 
 def _die_with_parent():
@@ -359,6 +365,7 @@ class Serving:
         self.path, self.env, self.start_child, self.out = settings_path, env, start_child, out
         self.child = None
         self.child_gpu = None
+        self.child_scan = None
         self.error = None
         self._lock = threading.Lock()
 
@@ -371,14 +378,17 @@ class Serving:
     def apply(self):
         with self._lock:
             serve, gpu = self.wanted()
+            scan = read_settings(self.path)["scan"]
             c = self.child
-            if c is not None and (not serve or gpu != self.child_gpu or c.state in ("failed", "stopped")):
+            if c is not None and (not serve or gpu != self.child_gpu or scan != self.child_scan
+                                  or c.state in ("failed", "stopped")):
                 c.stop()
                 self.out(f"{PREFIX} stopped" + ("" if not serve else " (restarting with the new settings)"))
                 self.child = None
             if serve and self.child is None:
                 try:
-                    self.child, self.child_gpu, self.error = self.start_child(gpu), gpu, None
+                    self.child, self.error = self.start_child(gpu, scan), None
+                    self.child_gpu, self.child_scan = gpu, scan
                 except Exception as e:
                     self.error = f"cannot start: {e}"
                     self.out(f"{PREFIX} {self.error}")
@@ -403,6 +413,10 @@ class Serving:
                 return 409, {**self.describe(), "error": f"REMOTE_TE_GPU={env_gpu(self.env)} is set where ComfyUI was "
                                                          f"started; it decides instead of this setting"}
             s["gpu"] = body["gpu"].strip()
+        if "scan" in body:
+            if not isinstance(body["scan"], bool):
+                return 400, {"error": "scan must be true or false"}
+            s["scan"] = body["scan"]
         save_settings(self.path, s)
         self.apply()
         return 200, self.describe()
@@ -411,7 +425,8 @@ class Serving:
         serve, gpu = self.wanted()
         c = self.child
         overrides = {k: self.env[k] for k in ("REMOTE_TE_SERVE", "REMOTE_TE_GPU") if self.env.get(k, "").strip()}
-        return {"serve": serve, "gpu": gpu or AUTO, "saved": read_settings(self.path), "overrides": overrides,
+        saved = read_settings(self.path)
+        return {"serve": serve, "gpu": gpu or AUTO, "scan": saved["scan"], "saved": saved, "overrides": overrides,
                 "state": c.state if c is not None else "off", "port": c.port if c is not None else None,
                 "gpu_name": getattr(c, "gpu_name", None), "error": self.error}
 
@@ -442,7 +457,7 @@ def starter_in_comfyui(env, out=print):
     from comfy.cli_args import args
     own_url = comfyui_url(args.listen, args.port, tls=bool(args.tls_keyfile and args.tls_certfile))
 
-    def start_child(wanted):
+    def start_child(wanted, scan):
         check_server_files()
         folders = model_folders(folder_paths.get_folder_paths("text_encoders"))
         if not folders:
@@ -457,7 +472,7 @@ def starter_in_comfyui(env, out=print):
                                                     keep, custom_nodes=custom_nodes,
                                                     capabilities_file=os.path.join(own, "capabilities.json"),
                                                     render_gpu=render, comfyui=own_url,
-                                                    types_file=os.path.join(own, "types.json")),
+                                                    types_file=os.path.join(own, "types.json"), scan=scan),
                             os.path.join(own, "server.log"), out=out, env=env)
         child.gpu_name = gpu.name
         out(f"{PREFIX} serving encoders from {', '.join(folders)} on {gpu.name} ({gpu.uuid}); kept models: {keep}")

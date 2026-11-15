@@ -236,6 +236,8 @@ def own_card_uuid():
     try:
         import comfy.model_management as mm
         dev = mm.get_torch_device()
+        if dev.type == "mps":
+            return "mps"
         return str(torch.cuda.get_device_properties(dev).uuid).lower() if dev.type == "cuda" else None
     except Exception:
         return None

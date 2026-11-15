@@ -3,6 +3,7 @@ import { api } from "../../scripts/api.js";
 
 const SERVE = "RemoteTE.Serve";
 const GPU = "RemoteTE.ServeGpu";
+const SCAN = "RemoteTE.ServeScan";
 const DEFAULT_URL = "RemoteTE.DefaultServerUrl";
 const CATEGORY = "Remote Text Encoder";
 
@@ -31,6 +32,7 @@ async function show(state) {
   try {
     if (s.get(SERVE) !== state.serve) await s.set(SERVE, state.serve);
     if (s.get(GPU) !== state.gpu) await s.set(GPU, state.gpu);
+    if (s.get(SCAN) !== state.scan) await s.set(SCAN, state.scan);
   } finally {
     syncing = false;
   }
@@ -110,6 +112,22 @@ app.registerExtension({
       onChange: (value, old) => {
         if (old === undefined || syncing) return;
         change({ gpu: String(value) });
+      },
+    },
+    {
+      id: SCAN,
+      category: [CATEGORY, "Serving", "Scan"],
+      name: "Check what each encoder can do in the background",
+      tooltip:
+        "After the encoder server starts, it loads each file not checked yet, one at a time while idle, to fill " +
+        "Remote Encoder Status's can column (text generation, vision). Off: a file is checked when it is first " +
+        "used for Generate Text or Remote Locate. Turn off on a slow disk. A change restarts the encoder server.",
+      type: "boolean",
+      defaultValue: true,
+      sortOrder: 0,
+      onChange: (value, old) => {
+        if (old === undefined || syncing) return;
+        change({ scan: !!value });
       },
     },
   ],
