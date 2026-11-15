@@ -31,6 +31,7 @@ LISTING_TTL_S = 10
 MAX_GENERATE_TOKENS = 32768
 MAX_IMAGE_PIXELS = 4 * 1024 * 1024
 VISION_TEST = (("blue", (0.0, 0.0, 1.0)), ("yellow", (1.0, 1.0, 0.0)))
+MPS = sys.platform == "darwin"
 VISION_HINT = ("wire a vision encoder (qwen3vl_8b_int8_convrot.safetensors or qwen3vl_4b_fp8_scaled.safetensors) "
                "into a second Remote CLIP Loader")
 
@@ -125,20 +126,38 @@ def need_mb(path):
     return (key[2] >> 20) + (gguf_support.extra_mb(path) if is_gguf(path) else 0)
 
 
+def mem_info():
+    import torch
+    if not MPS:
+        return torch.cuda.mem_get_info()
+    total = torch.mps.recommended_max_memory()
+    return max(total - torch.mps.driver_allocated_memory(), 0), total
+
+
+def allocated():
+    import torch
+    return torch.mps.current_allocated_memory() if MPS else torch.cuda.memory_allocated()
+
+
+def reserved():
+    import torch
+    return torch.mps.driver_allocated_memory() if MPS else torch.cuda.memory_reserved()
+
+
 def load_model(spec, probe=True, check_fit=True):
     import torch
     import comfy.sd
 
-    dev = torch.device("cuda", 0)
+    dev = torch.device("mps") if MPS else torch.device("cuda", 0)
     if is_gguf(spec.path) and gguf is None:
         raise StartupError(f"'{spec.name}' ({os.path.basename(spec.path)}) is a GGUF file: install ComfyUI-GGUF "
                            f"in ComfyUI's custom_nodes ({gguf_note})")
     need = need_mb(spec.path)
-    free_mb = torch.cuda.mem_get_info()[0] >> 20
+    free_mb = mem_info()[0] >> 20
     if check_fit and need > free_mb:
         raise StartupError(f"'{spec.name}' ({os.path.basename(spec.path)}, {need} MB) does not fit: "
                            f"{free_mb} MB free on {gpu_name}")
-    before = torch.cuda.memory_allocated()
+    before = allocated()
     t0 = time.perf_counter()
     clip_type = comfy.sd.CLIPType[model_hints.comfy_type(spec.type).upper()]
     if is_gguf(spec.path):
@@ -152,7 +171,7 @@ def load_model(spec, probe=True, check_fit=True):
     empty_think = "BaseQwen3" in [b.__name__ for b in cls.__mro__] and not cls.__name__.startswith("Qwen3VL")
     m = Loaded(spec, clip, empty_think, None, 0)
     encode(m, "warmup", {})
-    m.vram_mb = (torch.cuda.memory_allocated() - before) >> 20
+    m.vram_mb = (allocated() - before) >> 20
     try:
         measured[_file_key(spec.path)] = m.vram_mb
     except OSError:
@@ -176,7 +195,7 @@ def load_all(specs):
             models[spec.name] = load_model(spec)
         except torch.OutOfMemoryError as e:
             raise StartupError(f"'{spec.name}' ran out of VRAM while loading on {gpu_name}: {e}") from None
-    free_mb = torch.cuda.mem_get_info()[0] >> 20
+    free_mb = mem_info()[0] >> 20
     for m in models.values():
         print(f"  {m.spec.name:32} {m.vram_mb:6} MB", flush=True)
     print(f"  {'free':32} {free_mb:6} MB on {gpu_name}", flush=True)
@@ -187,7 +206,6 @@ def load_all(specs):
 
 def unload_model(m):
     import gc
-    import torch
     import comfy.model_management as mm
 
     patcher = m.clip.patcher
@@ -196,14 +214,12 @@ def unload_model(m):
     del patcher
     gc.collect()
     mm.soft_empty_cache()
-    print(f"unloaded '{m.spec.name}' as {m.spec.type}; {torch.cuda.memory_allocated() >> 20} MB still allocated "
+    print(f"unloaded '{m.spec.name}' as {m.spec.type}; {allocated() >> 20} MB still allocated "
           f"on {gpu_name}", flush=True)
 
 
 def free_vram_mb():
-    import torch
-
-    return (torch.cuda.mem_get_info()[0] + torch.cuda.memory_reserved() - torch.cuda.memory_allocated()) >> 20
+    return (mem_info()[0] + reserved() - allocated()) >> 20
 
 
 _listing = (None, 0.0, {})
@@ -707,11 +723,9 @@ def check_images(images):
 
 
 def vram():
-    import torch
-
-    free, total = torch.cuda.mem_get_info()
-    return {"allocated_mb": torch.cuda.memory_allocated() // 2**20,
-            "reserved_mb": torch.cuda.memory_reserved() // 2**20,
+    free, total = mem_info()
+    return {"allocated_mb": allocated() // 2**20,
+            "reserved_mb": reserved() // 2**20,
             "device_used_mb": (total - free) // 2**20}
 
 
@@ -977,12 +991,28 @@ def debug_log():
     return os.environ.get("REMOTE_TE_LOG", "").strip().lower() == "debug"
 
 
+def exit_with_parent():
+    parent = os.getppid()
+    while os.getppid() == parent:
+        time.sleep(2)
+    os._exit(0)
+
+
 def shares_card():
     return bool(render_uuid and gpu_uuid and render_uuid.lower() == gpu_uuid.lower())
 
 
+def comfyui_holds_models():
+    if not comfyui_url:
+        return True
+    try:
+        return comfyui_call("GET", "/remote_te/comfyui_models")["models"] > 0
+    except Exception:
+        return True
+
+
 def unload_idle_once():
-    if not gpu_lock.acquire(blocking=False):
+    if not comfyui_holds_models() or not gpu_lock.acquire(blocking=False):
         return []
     try:
         return cache.unload_idle(SHARED_IDLE_UNLOAD_S, ", card shared with ComfyUI")
@@ -1212,6 +1242,8 @@ def main():
     args = ap.parse_args()
     port = args.port
     commit = repo_commit(HERE)
+    if MPS:
+        threading.Thread(target=exit_with_parent, name="exit with parent", daemon=True).start()
     try:
         problems = prompt_files.check()
         if problems:
@@ -1270,7 +1302,7 @@ def main():
         comfyui_url = (args.comfyui_url or "").rstrip("/") or None
         if models_dir:
             import torch
-            free, total = torch.cuda.mem_get_info()
+            free, total = mem_info()
             total_mb, usable_mb = total >> 20, free >> 20
             hints = Hints(comfy.sd.detect_te_model)
             cache = ModelCache(load_on_demand, unload_model, free_vram_mb, lambda f: need_mb(model_paths()[f]),

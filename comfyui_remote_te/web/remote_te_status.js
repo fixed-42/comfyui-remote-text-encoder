@@ -288,6 +288,7 @@ async function applyKeep(node) {
   try {
     const res = await api.fetchApi(`/remote_te/relay/keep?url=${encodeURIComponent(url)}`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ keep, types }),
+      timeoutMs: null,
     });
     const data = await res.json();
     if (res.ok && Array.isArray(data?.models)) {
